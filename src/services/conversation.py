@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -20,12 +20,14 @@ class QueryAnalysis(BaseModel):
     intent: str = Field(description="User intent classification", pattern="^(news_discussion|general_chat)$")
 
 
-class ConversationState:
-    def __init__(self):
-        self.messages: List[Dict] = []
-        self.relevant_articles: List[Dict] = []
-        self.conversation_id: Optional[str] = None
-        self.language: str = "french"  # Default to French for B1 learners
+class ConversationState(TypedDict):
+    """State schema for LangGraph"""
+    messages: List[Dict]
+    query_analysis: Optional[Dict]
+    language: str
+    relevant_articles: List[Dict]
+    sources_used: List[Dict]
+    conversation_id: Optional[str]
 
 
 class FrenchNewsConversationAgent:
@@ -40,7 +42,7 @@ class FrenchNewsConversationAgent:
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph conversation flow"""
         
-        def analyze_query_node(state: Dict) -> Dict:
+        def analyze_query_node(state: ConversationState) -> ConversationState:
             """Analyze user query and determine intent"""
             user_message = state["messages"][-1]["content"]
             
@@ -77,7 +79,7 @@ class FrenchNewsConversationAgent:
             
             return state
 
-        def retrieve_articles_node(state: Dict) -> Dict:
+        def retrieve_articles_node(state: ConversationState) -> ConversationState:
             """Retrieve relevant news articles"""
             analysis = state.get("query_analysis", {})
             keywords = analysis.get("keywords", state["messages"][-1]["content"])
@@ -97,7 +99,7 @@ class FrenchNewsConversationAgent:
             
             return state
 
-        def generate_response_node(state: Dict) -> Dict:
+        def generate_response_node(state: ConversationState) -> ConversationState:
             """Generate conversational response"""
             messages = state.get("messages", [])
             user_message = messages[-1]["content"] if messages else ""
@@ -203,7 +205,7 @@ IMPORTANT: Always end your response by listing the sources used with their title
             
             return state
 
-        def should_retrieve_articles(state: Dict) -> str:
+        def should_retrieve_articles(state: ConversationState) -> str:
             """Decide whether to retrieve articles based on query analysis"""
             analysis = state.get("query_analysis", {})
             intent = analysis.get("intent", "news_discussion")
@@ -224,7 +226,7 @@ IMPORTANT: Always end your response by listing the sources used with their title
                 return next_node
 
         # Build the graph
-        workflow = StateGraph(dict)
+        workflow = StateGraph(ConversationState)
         
         workflow.add_node("analyze_query", analyze_query_node)
         workflow.add_node("retrieve_articles", retrieve_articles_node)
