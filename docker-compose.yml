@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - UVICORN_LOG_LEVEL=debug     # Set uvicorn log level to debug
+      - FASTAPI_DEBUG=true          # Enable FastAPI debug mode
+      
+      # Application-specific debug settings
+      - LOG_LEVEL=DEBUG             # Set application log level
+      - DEBUG=true                  # General debug flag
+    volumes:
+      - .:/app
+      - chroma_data:/app/chroma_db  # Persist ChromaDB data
+    command: uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    tty: true
+    stdin_open: true
+
+    
+
+
+  # Optional: Redis for caching (can be removed if not needed)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  chroma_data:  # ChromaDB persistent storage
+  redis_data:   # Redis data (optional)
