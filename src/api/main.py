@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from src.services.conversation import FrenchNewsConversationAgent
 from src.services.news_processor import news_processor
 from src.database.client import db_client
+from src.celery_app import celery_app
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="French News Discussion API",
-    description="API for discussing French news at B1 level using LangGraph",
+    description="API for discussing French news at B1 level using LangGraph and Celery",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -88,13 +89,16 @@ class NewsArticleResponse(BaseModel):
 @app.get("/")
 async def root():
     return {
-        "message": "French News Discussion API", 
+        "message": "French News Discussion API with Celery", 
         "status": "running",
         "endpoints": [
             "POST /chat - Start or continue a conversation",
             "GET /conversation/{conversation_id} - Get conversation history",
             "POST /process-news - Process daily news",
             "GET /news - Get recent news articles",
+            "GET /celery/status - Get Celery worker status",
+            "POST /celery/trigger-news-fetch - Manually trigger news fetching",
+            "GET /celery/task/{task_id} - Get task status",
             "GET /health - Health check"
         ]
     }
@@ -233,6 +237,75 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e)
         }
+
+
+# Celery-related endpoints
+@app.get("/celery/status")
+async def celery_status():
+    """Get Celery worker and task status"""
+    try:
+        # Get active tasks
+        active_tasks = celery_app.control.inspect().active()
+        
+        # Get worker stats
+        worker_stats = celery_app.control.inspect().stats()
+        
+        # Get scheduled tasks
+        scheduled_tasks = celery_app.control.inspect().scheduled()
+        
+        return {
+            "status": "running" if worker_stats else "no_workers",
+            "active_tasks": active_tasks or {},
+            "worker_stats": worker_stats or {},
+            "scheduled_tasks": scheduled_tasks or {},
+            "registered_tasks": list(celery_app.tasks.keys())
+        }
+        
+    except Exception as e:
+        logger.error(f"Celery status error: {e}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
+@app.post("/celery/trigger-news-fetch")
+async def trigger_manual_news_fetch(limit: int = 5):
+    """Manually trigger news fetching task"""
+    try:
+        from src.tasks.news_tasks import fetch_and_process_news
+        
+        task = fetch_and_process_news.delay(limit)
+        
+        return {
+            "message": f"News fetching task triggered with limit {limit}",
+            "task_id": task.id,
+            "status": "queued"
+        }
+        
+    except Exception as e:
+        logger.error(f"Manual news fetch trigger error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/celery/task/{task_id}")
+async def get_task_status(task_id: str):
+    """Get status of a specific Celery task"""
+    try:
+        from celery.result import AsyncResult
+        
+        task_result = AsyncResult(task_id, app=celery_app)
+        
+        return {
+            "task_id": task_id,
+            "status": task_result.status,
+            "result": task_result.result if task_result.ready() else None,
+            "traceback": task_result.traceback if task_result.failed() else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Task status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

@@ -7,30 +7,74 @@ services:
       - "8000:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - UVICORN_LOG_LEVEL=debug     # Set uvicorn log level to debug
-      - FASTAPI_DEBUG=true          # Enable FastAPI debug mode
-      
-      # Application-specific debug settings
-      - LOG_LEVEL=DEBUG             # Set application log level
-      - DEBUG=true                  # General debug flag
+      - REDIS_URL=redis://redis:6379/0
+      - UVICORN_LOG_LEVEL=debug
+      - FASTAPI_DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - DEBUG=true
     volumes:
       - .:/app
-      - chroma_data:/app/chroma_db  # Persist ChromaDB data
+      - chroma_data:/app/chroma_db
     command: uv run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - redis
     tty: true
     stdin_open: true
 
-    
+  # Celery Worker
+  celery-worker:
+    build: .
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - .:/app
+      - chroma_data:/app/chroma_db
+    command: uv run celery -A src.celery_app worker --loglevel=info --queues=news_processing,maintenance
+    depends_on:
+      - redis
+      - app
 
+  # Celery Beat (Scheduler)
+  celery-beat:
+    build: .
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - .:/app
+      - chroma_data:/app/chroma_db
+    command: uv run celery -A src.celery_app beat --loglevel=info
+    depends_on:
+      - redis
+      - celery-worker
 
-  # Optional: Redis for caching (can be removed if not needed)
+  # Redis for Celery
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    command: redis-server --appendonly yes
+
+
+  # Celery Flower (Monitoring)
+  celery-flower:
+    build: .
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - .:/app
+    command: uv run celery -A src.celery_app flower --port=5555 --loglevel=DEBUG
+    depends_on:
+      - redis
+      - celery-worker
 
 volumes:
-  chroma_data:  # ChromaDB persistent storage
-  redis_data:   # Redis data (optional)
+  chroma_data:
+  redis_data:
